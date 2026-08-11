@@ -5,11 +5,9 @@
 
 """Tests for ImportResourceState handler.
 
-The handler used to be a stub that answered "not yet implemented" for every
-resource in every provider. These tests pin the implemented behaviour, and in
-particular the three answers it must keep DISTINCT — "this type cannot be
-imported", "this object does not exist", and "here it is" — because collapsing any
-two of them sends the reader looking in the wrong place.
+The three answers the handler must keep DISTINCT — "this type cannot be imported",
+"this object does not exist", and "here it is" — because collapsing any two of them
+misdirects whoever reads the error.
 """
 
 from attrs import define
@@ -51,8 +49,8 @@ class _Importable:
 
 
 class _NotImportable:
-    """A resource with no import_state — a normal thing to be, and it must be
-    reported as such rather than as a framework limitation."""
+    """A resource with no import_state: reported as unsupported for THIS resource,
+    not as a framework limitation."""
 
     state_class = _ImportableState
 
@@ -76,11 +74,7 @@ def registered(request):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("registered", [_Importable], indirect=True)
 async def test_import_returns_the_object(registered) -> None:
-    """The whole point: an object that already exists is adopted into state.
-
-    Without this, a provider can only manage what it created — pointing it at a
-    running system means destroying and recreating everything first.
-    """
+    """An object that already exists is adopted into state."""
     request = pb.ImportResourceState.Request(type_name="test_resource", id="widget")
 
     response = await ImportResourceStateHandler(request, context=None)
@@ -88,8 +82,8 @@ async def test_import_returns_the_object(registered) -> None:
     assert not [d for d in response.diagnostics if d.severity == pb.Diagnostic.ERROR]
     assert len(response.imported_resources) == 1
     assert response.imported_resources[0].type_name == "test_resource"
-    # The state must actually carry bytes; an empty msgpack would import a resource
-    # that then shows every attribute as a change on the next plan.
+    # Empty msgpack would import a resource that shows every attribute as a change
+    # on the next plan.
     assert response.imported_resources[0].state.msgpack
 
 
@@ -110,8 +104,7 @@ async def test_import_of_absent_object_is_not_found(registered) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("registered", [_NotImportable], indirect=True)
 async def test_resource_without_import_state_says_so(registered) -> None:
-    """A resource that cannot be imported reports ITSELF as unsupported — the old
-    stub said this for every resource, including the ones that can."""
+    """A resource with no import_state reports itself as unsupported."""
     request = pb.ImportResourceState.Request(type_name="test_resource", id="widget")
 
     response = await ImportResourceStateHandler(request, context=None)

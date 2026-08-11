@@ -34,21 +34,13 @@ async def _import_resource_state_impl(
 ) -> pb.ImportResourceState.Response:
     """Adopt an object that already exists into Terraform state.
 
-    WHY THIS MATTERS ENOUGH TO IMPLEMENT
-    Without import, a provider can only manage what it created. Pointing it at a
-    running system means destroying and recreating everything first — an outage
-    taken purely to gain visibility. That makes import the difference between a
-    provider you can adopt and one you can only start over with.
+    A resource participates by implementing `import_state(ctx, id) -> state | None`;
+    the framework marshals whatever it returns through the resource schema.
 
-    HOW A RESOURCE PARTICIPATES
-    By implementing `import_state(id) -> state | None`. The framework asks for it
-    and marshals whatever comes back; a resource that does not implement it gets
-    the honest "not supported" answer it used to get unconditionally.
-
-    Falling back to `read()` would be wrong: read is given prior state, while
-    import is given an ID STRING and must find the object from that alone. They
-    are different questions, and a resource whose id is not its only identifier
-    (a workspace plus a name, say) can only answer the second one deliberately.
+    `read()` is deliberately not used as a fallback: read is given prior state,
+    while import is given an ID STRING and must locate the object from that alone.
+    A resource whose identity is more than its id — a workspace plus a name, say —
+    can only answer the second question deliberately.
     """
     response = pb.ImportResourceState.Response()
 
@@ -75,9 +67,8 @@ async def _import_resource_state_impl(
 
         importer = getattr(resource_class, "import_state", None)
         if importer is None:
-            # NOT an error. A resource that cannot be imported is a normal thing;
-            # what was wrong before was answering this for every resource in every
-            # provider, including the ones that can.
+            # A resource that cannot be imported is a normal thing to be, so this
+            # reports the resource rather than the framework.
             logger.info(
                 "Resource does not implement import_state",
                 operation="import_resource_state",
@@ -114,9 +105,8 @@ async def _import_resource_state_impl(
         imported = await resource_handler.import_state(resource_context, request.id)
 
         if imported is None:
-            # "Not found" is a distinct answer from "cannot import", and Terraform
-            # has a specific message for it. Reporting one as the other sends the
-            # reader looking in the wrong place.
+            # "Not found" and "cannot import" are different answers; Terraform has a
+            # specific message for the first, and conflating them misdirects the reader.
             response.diagnostics.append(
                 pb.Diagnostic(
                     severity=pb.Diagnostic.ERROR,

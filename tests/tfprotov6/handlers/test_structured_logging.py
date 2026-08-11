@@ -218,11 +218,8 @@ class TestWarningLogging:
 
     @pytest.mark.asyncio
     async def test_import_resource_state_logs_structured_context(self) -> None:
-        """Import is implemented, so it no longer logs a "not implemented" warning.
-
-        What still matters is that whatever it logs carries the structured context —
-        an unregistered type is an error path, and an error with no operation or
-        resource type in it is one nobody can trace back."""
+        """The error path carries structured context: an error with no operation or
+        resource type in it cannot be traced back to a request."""
         request = pb.ImportResourceState.Request(type_name="test_resource", id="test-id")
 
         with patch("pyvider.protocols.tfprotov6.handlers.import_resource_state.logger") as mock_logger:
