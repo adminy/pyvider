@@ -96,6 +96,29 @@ class BaseResource(ABC, Generic[ResourceType, StateType, ConfigType]):
         return {k: cls._cty_to_attrs_recursive(v, value_type) for k, v in data.items()}
 
     @classmethod
+    def _resolved_fields(cls, target_cls: type) -> tuple[Any, ...]:
+        """attrs fields with their type annotations resolved to real types.
+
+        Under `from __future__ import annotations` every annotation is a STRING, so
+        `field.type` is `"list[str] | None"` rather than the type. `get_origin` of a
+        string is None, so the converter cannot see a list and returns the raw
+        CtyValue elements — a config whose `targets` is a list of CtyValue reads
+        fine until something treats one as a str.
+
+        `resolve_types` mutates the class, so the cost is paid once per class.
+        """
+        try:
+            attrs.resolve_types(target_cls)
+        except Exception:
+            # Unresolvable annotations (a name only available under TYPE_CHECKING,
+            # say) leave the fields as they were rather than failing the conversion.
+            logger.debug(
+                "Could not resolve type annotations",
+                class_name=getattr(target_cls, "__name__", str(target_cls)),
+            )
+        return attrs.fields(target_cls)
+
+    @classmethod
     def _handle_attrs_conversion(cls, data: Any, target_cls: type) -> Any | None:
         if not isinstance(data, dict):
             logger.warning(
@@ -109,7 +132,7 @@ class BaseResource(ABC, Generic[ResourceType, StateType, ConfigType]):
             return None
 
         kwargs = {}
-        target_fields = {f.name: f for f in attrs.fields(target_cls)}
+        target_fields = {f.name: f for f in cls._resolved_fields(target_cls)}
 
         for name, field_def in target_fields.items():
             if name in data and field_def.init:
