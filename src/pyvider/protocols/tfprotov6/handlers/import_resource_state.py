@@ -8,8 +8,17 @@ from typing import Any
 
 from provide.foundation import logger
 
+from pyvider.exceptions import ResourceError
+from pyvider.hub import hub
 from pyvider.protocols.tfprotov6.handlers._metrics import rpc_handler
+from pyvider.protocols.tfprotov6.handlers.utils import (
+    attrs_to_dict_for_cty,
+    check_test_only_access,
+    create_diagnostic_from_exception,
+)
 import pyvider.protocols.tfprotov6.protobuf as pb
+from pyvider.conversion import marshal
+from pyvider.resources.context import ResourceContext
 
 
 @rpc_handler("ImportResourceState")
@@ -23,26 +32,132 @@ async def ImportResourceStateHandler(
 async def _import_resource_state_impl(
     request: pb.ImportResourceState.Request, context: Any
 ) -> pb.ImportResourceState.Response:
-    """Implementation of ImportResourceState handler."""
-    logger.warning(
-        "Import resource state operation not yet implemented",
+    """Adopt an object that already exists into Terraform state.
+
+    WHY THIS MATTERS ENOUGH TO IMPLEMENT
+    Without import, a provider can only manage what it created. Pointing it at a
+    running system means destroying and recreating everything first — an outage
+    taken purely to gain visibility. That makes import the difference between a
+    provider you can adopt and one you can only start over with.
+
+    HOW A RESOURCE PARTICIPATES
+    By implementing `import_state(id) -> state | None`. The framework asks for it
+    and marshals whatever comes back; a resource that does not implement it gets
+    the honest "not supported" answer it used to get unconditionally.
+
+    Falling back to `read()` would be wrong: read is given prior state, while
+    import is given an ID STRING and must find the object from that alone. They
+    are different questions, and a resource whose id is not its only identifier
+    (a workspace plus a name, say) can only answer the second one deliberately.
+    """
+    response = pb.ImportResourceState.Response()
+
+    logger.debug(
+        "ImportResourceState handler called",
         operation="import_resource_state",
         resource_type=request.type_name,
         import_id=request.id,
     )
 
-    # Return diagnostic indicating feature not yet implemented
-    diag = pb.Diagnostic(
-        severity=pb.Diagnostic.WARNING,
-        summary="Import not yet implemented",
-        detail=(
-            f"Resource import for type '{request.type_name}' is not yet implemented.\n\n"
-            "Suggestion: This provider does not currently support importing existing resources. "
-            "You will need to create resources using Terraform instead.\n\n"
-            "Workaround: Define the resource in your Terraform configuration and apply it."
-        ),
-    )
-    return pb.ImportResourceState.Response(diagnostics=[diag])
+    try:
+        resource_class = hub.get_component("resource", request.type_name)
+        if not resource_class:
+            err = ResourceError(
+                f"Resource type '{request.type_name}' not registered.\n\n"
+                f"Suggestion: Ensure the resource is registered with @register_resource "
+                f"and that component discovery has completed.\n\n"
+                f"Run 'pyvider components list' to see what was registered."
+            )
+            err.add_context("resource.type_name", request.type_name)
+            raise err
 
+        check_test_only_access(resource_class, request.type_name, "resource")
 
-# 🐍🏗️🔚
+        importer = getattr(resource_class, "import_state", None)
+        if importer is None:
+            # NOT an error. A resource that cannot be imported is a normal thing;
+            # what was wrong before was answering this for every resource in every
+            # provider, including the ones that can.
+            logger.info(
+                "Resource does not implement import_state",
+                operation="import_resource_state",
+                resource_type=request.type_name,
+            )
+            response.diagnostics.append(
+                pb.Diagnostic(
+                    severity=pb.Diagnostic.ERROR,
+                    summary=f"{request.type_name} does not support import",
+                    detail=(
+                        f"The resource type '{request.type_name}' does not implement "
+                        f"`import_state`, so an existing object cannot be adopted into state.\n\n"
+                        f"Suggestion: implement `async def import_state(self, ctx, import_id)` on the "
+                        f"resource, returning its state object — or declare the resource in "
+                        f"configuration and apply it instead."
+                    ),
+                )
+            )
+            return response
+
+        resource_schema = resource_class.get_schema()
+        resource_handler = resource_class()
+
+        provider_instance = hub.get_component("singleton", "provider")
+        provider_context = hub.get_component("singleton", "provider_context")
+        test_mode_enabled = getattr(provider_context, "test_mode_enabled", False)
+        resource_context = ResourceContext(
+            config=None,
+            state=None,
+            capabilities=provider_instance.metadata.capabilities if provider_instance else {},
+            test_mode_enabled=test_mode_enabled,
+        )
+
+        imported = await resource_handler.import_state(resource_context, request.id)
+
+        if imported is None:
+            # "Not found" is a distinct answer from "cannot import", and Terraform
+            # has a specific message for it. Reporting one as the other sends the
+            # reader looking in the wrong place.
+            response.diagnostics.append(
+                pb.Diagnostic(
+                    severity=pb.Diagnostic.ERROR,
+                    summary="Cannot import non-existent remote object",
+                    detail=(
+                        f"No {request.type_name} was found for id {request.id!r}. Only objects that "
+                        f"already exist can be imported; check the id, or use `tofu apply` to create it."
+                    ),
+                )
+            )
+            return response
+
+        raw_state_dict = attrs_to_dict_for_cty(imported)
+        validator_type = resource_schema.block.to_cty_type()
+        state_cty = validator_type.validate(raw_state_dict)
+        marshalled = marshal(state_cty, schema=resource_schema.block)
+
+        imported_resource = pb.ImportResourceState.ImportedResource(
+            type_name=request.type_name,
+        )
+        imported_resource.state.msgpack = marshalled.msgpack
+        response.imported_resources.append(imported_resource)
+
+        logger.info(
+            "Resource imported successfully",
+            operation="import_resource_state",
+            resource_type=request.type_name,
+            import_id=request.id,
+            state_fields=list(raw_state_dict.keys()),
+        )
+        return response
+
+    except Exception as e:
+        logger.error(
+            "Resource import failed",
+            operation="import_resource_state",
+            resource_type=request.type_name,
+            import_id=request.id,
+            error_type=type(e).__name__,
+            error_message=str(e),
+            exc_info=True,
+        )
+        response.diagnostics.append(await create_diagnostic_from_exception(e))
+        return response

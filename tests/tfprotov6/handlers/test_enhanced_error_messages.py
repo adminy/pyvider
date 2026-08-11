@@ -256,17 +256,21 @@ class TestUnimplementedHandlerMessages:
 
     @pytest.mark.asyncio
     async def test_import_resource_state_has_helpful_diagnostic(self) -> None:
-        """Test that import handler returns helpful not-implemented diagnostic."""
+        """Import IS implemented now, so an unknown type is a real error.
+
+        This used to assert the "not yet implemented" stub. The handler answers a
+        specific question per case; here the type name is not registered, which is a
+        configuration mistake and is reported as one rather than as a framework
+        limitation.
+        """
         request = pb.ImportResourceState.Request(type_name="test_resource", id="test-id")
 
         response = await _import_resource_state_impl(request, context=None)
 
         assert len(response.diagnostics) == 1
         diag = response.diagnostics[0]
-        assert diag.severity == pb.Diagnostic.WARNING
-        assert "not yet implemented" in diag.detail
+        assert diag.severity == pb.Diagnostic.ERROR
         assert "Suggestion:" in diag.detail
-        assert "Workaround:" in diag.detail
 
     @pytest.mark.asyncio
     async def test_move_resource_state_has_workaround(self) -> None:

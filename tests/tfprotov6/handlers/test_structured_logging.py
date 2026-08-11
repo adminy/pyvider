@@ -217,18 +217,22 @@ class TestWarningLogging:
     """Test that handlers log warnings appropriately."""
 
     @pytest.mark.asyncio
-    async def test_import_resource_state_logs_warning(self) -> None:
-        """Test that import_resource_state logs warning for unimplemented feature."""
+    async def test_import_resource_state_logs_structured_context(self) -> None:
+        """Import is implemented, so it no longer logs a "not implemented" warning.
+
+        What still matters is that whatever it logs carries the structured context —
+        an unregistered type is an error path, and an error with no operation or
+        resource type in it is one nobody can trace back."""
         request = pb.ImportResourceState.Request(type_name="test_resource", id="test-id")
 
         with patch("pyvider.protocols.tfprotov6.handlers.import_resource_state.logger") as mock_logger:
             await _import_resource_state_impl(request, context=None)
 
-            # Should log warning for not implemented
-            assert mock_logger.warning.called
-            call_kwargs = mock_logger.warning.call_args[1]
-            assert "operation" in call_kwargs
+            assert mock_logger.error.called
+            call_kwargs = mock_logger.error.call_args[1]
             assert call_kwargs["operation"] == "import_resource_state"
+            assert call_kwargs["resource_type"] == "test_resource"
+            assert call_kwargs["import_id"] == "test-id"
 
     @pytest.mark.asyncio
     async def test_move_resource_state_logs_warning(self) -> None:
