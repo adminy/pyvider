@@ -242,9 +242,9 @@ class TestConfigureHookIsInvoked:
 
     @pytest.mark.asyncio
     async def test_configure_hook_receives_the_config(self, provider_in_hub: Any) -> None:
-        from pyvider.conversion import marshal
-
         from provide.testkit.mocking import patch
+
+        from pyvider.conversion import marshal
 
         provider = hub.get_component("singleton", "provider")
         seen: list[Any] = []

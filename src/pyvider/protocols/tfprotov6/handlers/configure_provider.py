@@ -33,6 +33,19 @@ async def ConfigureProviderHandler(
     return await _configure_provider_impl(request, context)
 
 
+def _resolve_test_mode(config_instance: Any) -> tuple[bool, str]:
+    """Resolve pyvider_testmode: env var beats HCL config beats default."""
+    env_testmode_str = get_env("PYVIDER_TESTMODE", default=None)
+    env_testmode = parse_bool_extended(env_testmode_str) if env_testmode_str else None
+    config_testmode = getattr(config_instance, "pyvider_testmode", None)
+
+    if env_testmode is not None:
+        return env_testmode, "PYVIDER_TESTMODE environment variable"
+    if config_testmode is not None:
+        return config_testmode, "provider configuration (HCL)"
+    return False, "default"
+
+
 async def _configure_provider_impl(
     request: pb.ConfigureProvider.Request, context: Any
 ) -> pb.ConfigureProvider.Response:
@@ -129,29 +142,13 @@ async def _configure_provider_impl(
             provider_name=provider_instance.metadata.name,
         )
 
-        # Check PYVIDER_TESTMODE environment variable (highest priority)
-        env_testmode_str = get_env("PYVIDER_TESTMODE", default=None)
-        env_testmode = parse_bool_extended(env_testmode_str) if env_testmode_str else None
-
-        # Check HCL configuration (lower priority)
-        config_testmode = getattr(config_instance, "pyvider_testmode", None)
-
-        # Environment variable takes precedence over HCL config
-        if env_testmode is not None:
-            test_mode_enabled = env_testmode
-            test_mode_source = "PYVIDER_TESTMODE environment variable"
-        elif config_testmode is not None:
-            test_mode_enabled = config_testmode
-            test_mode_source = "provider configuration (HCL)"
-        else:
-            test_mode_enabled = False
-            test_mode_source = "default"
+        # Check PYVIDER_TESTMODE environment variable (highest priority),
+        # then HCL configuration, then default.
+        test_mode_enabled, test_mode_source = _resolve_test_mode(config_instance)
 
         logger.debug(
             "Resolved pyvider_testmode",
             config_instance_type=type(config_instance).__name__,
-            env_testmode=env_testmode,
-            config_testmode=config_testmode,
             final_value=test_mode_enabled,
             source=test_mode_source,
         )
