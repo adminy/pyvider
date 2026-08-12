@@ -10,7 +10,7 @@ from provide.foundation import logger
 from provide.foundation.config import get_env, parse_bool_extended
 
 from pyvider.conversion import unmarshal
-from pyvider.exceptions import ProviderConfigurationError, PyviderError
+from pyvider.exceptions import ProviderConfigurationError, ProviderError, PyviderError
 from pyvider.hub import hub
 from pyvider.protocols.tfprotov6.handlers._metrics import rpc_handler
 from pyvider.protocols.tfprotov6.handlers.utils import create_diagnostic_from_exception
@@ -157,6 +157,37 @@ async def _configure_provider_impl(
         )
         provider_context = ProviderContext(config=config_instance, test_mode_enabled=test_mode_enabled)
         hub.register("singleton", "provider_context", provider_context)
+
+        # The provider's own configure() hook: where a provider turns configuration
+        # into whatever it needs to serve requests — an API client, credentials, a
+        # working directory. Registering the context without calling it leaves every
+        # provider that overrides configure() running on its defaults, and the only
+        # symptom is requests going somewhere other than where the config said.
+        try:
+            await provider_instance.configure(config_instance)
+        except ProviderError as e:
+            # Terraform may configure a provider more than once in a session, and a
+            # provider that is already configured is not a failure — the "configure
+            # once" rule is about multiple provider BLOCKS, which is a different
+            # thing from a repeated RPC.
+            if "already been configured" not in str(e):
+                raise
+            logger.debug(
+                "Provider was already configured",
+                operation="configure_provider",
+                provider_name=provider_instance.metadata.name,
+            )
+        except Exception as e:
+            logger.error(
+                "Provider configure() hook failed",
+                operation="configure_provider",
+                provider_name=provider_instance.metadata.name,
+                error_type=type(e).__name__,
+                error_message=str(e),
+                exc_info=True,
+            )
+            response.diagnostics.append(await create_diagnostic_from_exception(e))
+            return response
 
         if test_mode_enabled:
             logger.warning(

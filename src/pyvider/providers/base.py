@@ -5,6 +5,8 @@
 
 
 import asyncio
+
+import attrs
 from typing import Any
 
 from attrs import define, field
@@ -32,6 +34,21 @@ class ProviderMetadata:
     version: str
     protocol_version: str = "6"
     capabilities: ProviderCapabilities = field(factory=ProviderCapabilities)
+
+
+def _config_keys(config: Any) -> list[str]:
+    """Field names of a provider config, whatever it is.
+
+    The configure hook receives what the protocol layer produced: an attrs instance
+    for a populated config, None for an empty one, and a dict when called directly.
+    """
+    if config is None:
+        return []
+    if isinstance(config, dict):
+        return list(config.keys())
+    if attrs.has(type(config)):
+        return [f.name for f in attrs.fields(type(config))]
+    return []
 
 
 @define
@@ -166,7 +183,7 @@ class BaseProvider:
                 operation="configure",
                 provider_name=self.metadata.name,
                 provider_version=self.metadata.version,
-                config_keys=list(config.keys()),
+                config_keys=_config_keys(config),
             )
             self._configured = True
             logger.info(
