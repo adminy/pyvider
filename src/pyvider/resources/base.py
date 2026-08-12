@@ -6,7 +6,7 @@
 
 from abc import ABC, abstractmethod
 from types import UnionType
-from typing import Any, Generic, TypeVar, get_args, get_origin
+from typing import Any, Generic, TypeVar, cast, get_args, get_origin
 
 import attrs
 from provide.foundation import logger
@@ -116,7 +116,7 @@ class BaseResource(ABC, Generic[ResourceType, StateType, ConfigType]):
                 "Could not resolve type annotations",
                 class_name=getattr(target_cls, "__name__", str(target_cls)),
             )
-        return attrs.fields(target_cls)
+        return cast(tuple[Any, ...], attrs.fields(target_cls))
 
     @classmethod
     def _handle_attrs_conversion(cls, data: Any, target_cls: type) -> Any | None:

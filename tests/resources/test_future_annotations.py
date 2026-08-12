@@ -43,9 +43,7 @@ def test_list_elements_are_plain_strings() -> None:
     Anything treating an element as a str — `", ".join(targets)` — raises
     "expected str instance, CtyValue found" otherwise.
     """
-    out = BaseResource.from_cty(
-        _cfg_value({"name": "caddy", "targets": ["sbc", "appliance"], "env": {}}), Cfg
-    )
+    out = BaseResource.from_cty(_cfg_value({"name": "caddy", "targets": ["sbc", "appliance"], "env": {}}), Cfg)
 
     assert out.targets == ["sbc", "appliance"]
     assert all(isinstance(t, str) for t in out.targets)
@@ -53,9 +51,7 @@ def test_list_elements_are_plain_strings() -> None:
 
 
 def test_map_values_are_plain_strings() -> None:
-    out = BaseResource.from_cty(
-        _cfg_value({"name": "caddy", "targets": [], "env": {"A": "1"}}), Cfg
-    )
+    out = BaseResource.from_cty(_cfg_value({"name": "caddy", "targets": [], "env": {"A": "1"}}), Cfg)
 
     assert out.env == {"A": "1"}
     assert all(isinstance(v, str) for v in out.env.values())

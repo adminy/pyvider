@@ -8,6 +8,7 @@ from typing import Any
 
 from provide.foundation import logger
 
+from pyvider.conversion import marshal
 from pyvider.exceptions import ResourceError
 from pyvider.hub import hub
 from pyvider.protocols.tfprotov6.handlers._metrics import rpc_handler
@@ -17,7 +18,6 @@ from pyvider.protocols.tfprotov6.handlers.utils import (
     create_diagnostic_from_exception,
 )
 import pyvider.protocols.tfprotov6.protobuf as pb
-from pyvider.conversion import marshal
 from pyvider.resources.context import ResourceContext
 
 
@@ -65,8 +65,10 @@ async def _import_resource_state_impl(
 
         check_test_only_access(resource_class, request.type_name, "resource")
 
-        importer = getattr(resource_class, "import_state", None)
-        if importer is None:
+        resource_schema = resource_class.get_schema()
+        resource_handler = resource_class()
+        import_state = getattr(resource_handler, "import_state", None)
+        if import_state is None:
             # A resource that cannot be imported is a normal thing to be, so this
             # reports the resource rather than the framework.
             logger.info(
@@ -89,20 +91,17 @@ async def _import_resource_state_impl(
             )
             return response
 
-        resource_schema = resource_class.get_schema()
-        resource_handler = resource_class()
-
         provider_instance = hub.get_component("singleton", "provider")
         provider_context = hub.get_component("singleton", "provider_context")
         test_mode_enabled = getattr(provider_context, "test_mode_enabled", False)
-        resource_context = ResourceContext(
+        resource_context: ResourceContext = ResourceContext(
             config=None,
             state=None,
-            capabilities=provider_instance.metadata.capabilities if provider_instance else {},
+            capabilities=provider_instance.metadata.capabilities if provider_instance else {},  # type: ignore[arg-type]
             test_mode_enabled=test_mode_enabled,
         )
 
-        imported = await resource_handler.import_state(resource_context, request.id)
+        imported = await import_state(resource_context, request.id)
 
         if imported is None:
             # "Not found" and "cannot import" are different answers; Terraform has a

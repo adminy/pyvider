@@ -19,7 +19,7 @@ from pyvider.protocols.tfprotov6.handlers.import_resource_state import (
     ImportResourceStateHandler,
 )
 import pyvider.protocols.tfprotov6.protobuf as pb
-from pyvider.schema import a_str, s_resource
+from pyvider.schema import PvsSchema, a_str, s_resource
 
 
 @define
@@ -34,7 +34,7 @@ class _Importable:
     state_class = _ImportableState
 
     @classmethod
-    def get_schema(cls):
+    def get_schema(cls) -> PvsSchema:
         return s_resource(
             {
                 "id": a_str(computed=True),
@@ -55,7 +55,7 @@ class _NotImportable:
     state_class = _ImportableState
 
     @classmethod
-    def get_schema(cls):
+    def get_schema(cls) -> PvsSchema:
         return s_resource({"id": a_str(computed=True), "name": a_str(required=True)})
 
 
@@ -90,7 +90,7 @@ async def test_import_returns_the_object(registered) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("registered", [_Importable], indirect=True)
 async def test_import_of_absent_object_is_not_found(registered) -> None:
-    """"Does not exist" is a different answer from "cannot be imported"."""
+    """ "Does not exist" is a different answer from "cannot be imported"."""
     request = pb.ImportResourceState.Request(type_name="test_resource", id="missing")
 
     response = await ImportResourceStateHandler(request, context=None)
