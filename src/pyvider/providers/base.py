@@ -11,7 +11,6 @@ import attrs
 from attrs import define, field
 from provide.foundation import logger
 
-from pyvider.cty import CtyType
 from pyvider.exceptions import FrameworkConfigurationError, ProviderError
 from pyvider.schema import PvsSchema
 
@@ -67,6 +66,7 @@ class BaseProvider:
     capabilities: dict[str, Any] = field(factory=dict, init=False)
     _setup_done: bool = field(default=False, init=False)
     _setup_lock: asyncio.Lock = field(factory=asyncio.Lock, init=False)
+    _configure_lock: asyncio.Lock = field(factory=asyncio.Lock, init=False)
 
     async def setup(self) -> None:
         """
@@ -151,9 +151,15 @@ class BaseProvider:
                 capabilities=list(self.capabilities.keys()),
             )
 
-    async def configure(self, config: dict[str, CtyType]) -> None:
-        """Configure the provider with the given configuration."""
-        async with asyncio.Lock():
+    async def configure(self, config: Any) -> None:
+        """Configure the provider with the given configuration.
+
+        The ``config`` parameter is an attrs instance produced by the framework's
+        configuration parsing (via ``BaseResource.from_cty()``).  It is not a
+        plain ``dict``; use attribute access (``config.api_key``) rather than
+        mapping access (``config["api_key"]`` or ``config.get("api_key")``).
+        """
+        async with self._configure_lock:
             if self._configured:
                 logger.warning(
                     "Attempted to configure provider that is already configured",

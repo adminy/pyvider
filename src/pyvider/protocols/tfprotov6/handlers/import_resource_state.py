@@ -127,6 +127,7 @@ async def _import_resource_state_impl(
             type_name=request.type_name,
         )
         imported_resource.state.msgpack = marshalled.msgpack
+        imported_resource.private = b""
         response.imported_resources.append(imported_resource)
 
         logger.info(

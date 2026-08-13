@@ -152,28 +152,35 @@ async def _configure_provider_impl(
             final_value=test_mode_enabled,
             source=test_mode_source,
         )
-        provider_context = ProviderContext(config=config_instance, test_mode_enabled=test_mode_enabled)
-        hub.register("singleton", "provider_context", provider_context)
 
         # The provider's own configure() hook: where a provider turns configuration
         # into whatever it needs to serve requests — an API client, credentials, a
-        # working directory. Registering the context without calling it leaves every
-        # provider that overrides configure() running on its defaults, and the only
-        # symptom is requests going somewhere other than where the config said.
+        # working directory. Registering the context after the hook fully succeeds
+        # ensures the published context always matches the live provider object's
+        # state, and a failed hook does not leave _configured stuck True with no client.
         try:
             await provider_instance.configure(config_instance)
-        except ProviderError as e:
-            # Terraform may configure a provider more than once in a session, and a
-            # provider that is already configured is not a failure — the "configure
-            # once" rule is about multiple provider BLOCKS, which is a different
-            # thing from a repeated RPC.
-            if "already been configured" not in str(e):
-                raise
-            logger.debug(
-                "Provider was already configured",
-                operation="configure_provider",
-                provider_name=provider_instance.metadata.name,
+            # Hook succeeded — now safe to mark configured and publish context.
+            provider_instance._configured = True
+            provider_context = ProviderContext(
+                config=config_instance, test_mode_enabled=test_mode_enabled
             )
+            hub.register("singleton", "provider_context", provider_context)
+        except ProviderError:
+            # ProviderError raised by the hook itself (not the "already configured"
+            # guard in BaseProvider.configure).  Re-raise only if it's not the
+            # expected "already configured" signal from a repeated RPC.
+            if provider_instance._configured:
+                # Already configured — this is a repeated RPC, treat as success
+                # (the "configure once" rule concerns multiple provider BLOCKS,
+                # not repeated ConfigureProvider RPCs).
+                logger.debug(
+                    "Provider was already configured",
+                    operation="configure_provider",
+                    provider_name=provider_instance.metadata.name,
+                )
+            else:
+                raise
         except Exception as e:
             logger.error(
                 "Provider configure() hook failed",
